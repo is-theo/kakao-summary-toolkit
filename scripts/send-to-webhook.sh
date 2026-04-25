@@ -71,7 +71,7 @@ if [[ -z "$CHAT_META" ]]; then
   exit 1
 fi
 
-CHAT_NAME=$(echo "$CHAT_META" | python3 -c "import json,sys; print(json.load(sys.stdin, strict=False)['name'])")
+CHAT_NAME=$(echo "$CHAT_META" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
 echo "▶ Chat: $CHAT_NAME (ID: $CHAT_ID)"
 
 # ============================================================================
@@ -99,17 +99,29 @@ fi
 # Step 3: Build payload (combine metadata + messages)
 # ============================================================================
 
-# Compute window timestamps (KST)
-NOW_KST=$(date +%Y-%m-%dT%H:%M:%S%z | sed 's/\(..\)$/:\1/')
-WINDOW_END=$(date "+%Y-%m-%dT23:59:59+09:00" -v-1d 2>/dev/null || date -u -d 'yesterday' "+%Y-%m-%dT23:59:59+09:00")
-WINDOW_START=$(date "+%Y-%m-%dT00:00:00+09:00" -v-1d 2>/dev/null || date -u -d 'yesterday' "+%Y-%m-%dT00:00:00+09:00")
+# Compute window timestamps (KST, macOS date syntax)
+NOW_KST=$(date '+%Y-%m-%dT%H:%M:%S+09:00')
+WINDOW_END=$(date -v-1d '+%Y-%m-%dT23:59:59+09:00')
+WINDOW_START=$(date -v-1d '+%Y-%m-%dT00:00:00+09:00')
 
-PAYLOAD=$(python3 <<EOF
+# Pass everything to Python via env vars (avoids JSON parsing issues with shell)
+export PY_CHAT_META="$CHAT_META"
+export PY_MESSAGES="$MESSAGES_JSON"
+export PY_NOW_KST="$NOW_KST"
+export PY_WINDOW_START="$WINDOW_START"
+export PY_WINDOW_END="$WINDOW_END"
+export PY_SINCE_LABEL="$SINCE"
+
+# Write payload directly to temp file from Python (avoids shell variable corruption)
+PAYLOAD_FILE=$(mktemp -t kakao-payload.XXXXXX.json)
+trap 'rm -f "$PAYLOAD_FILE"' EXIT
+
+python3 <<PYEOF > "$PAYLOAD_FILE"
 import json
-import sys
+import os
 
-chat_meta = $CHAT_META
-messages = $MESSAGES_JSON
+chat_meta = json.loads(os.environ['PY_CHAT_META'], strict=False)
+messages = json.loads(os.environ['PY_MESSAGES'], strict=False)
 
 # Compute active speaker count
 speakers = set()
@@ -122,14 +134,14 @@ for m in messages:
 payload = {
     "meta": {
         "version": "1.0",
-        "sent_at": "$NOW_KST",
+        "sent_at": os.environ['PY_NOW_KST'],
         "source": "mac-kakaocli",
     },
     "chat": chat_meta,
     "window": {
-        "since_label": "$SINCE",
-        "since": "$WINDOW_START",
-        "until": "$WINDOW_END",
+        "since_label": os.environ['PY_SINCE_LABEL'],
+        "since": os.environ['PY_WINDOW_START'],
+        "until": os.environ['PY_WINDOW_END'],
     },
     "stats": {
         "message_count": len(messages),
@@ -138,12 +150,11 @@ payload = {
     "messages": messages,
 }
 print(json.dumps(payload, ensure_ascii=False))
-EOF
-)
+PYEOF
 
-# Optionally save payload to file
+# Optionally save a copy of payload (for debugging)
 if [[ -n "$SAVE_TO" ]]; then
-  echo "$PAYLOAD" > "$SAVE_TO"
+  cp "$PAYLOAD_FILE" "$SAVE_TO"
   echo "  → Saved payload to $SAVE_TO ($(wc -c < "$SAVE_TO") bytes)"
 fi
 
@@ -154,12 +165,12 @@ fi
 echo "▶ Sending to webhook..."
 echo "  → URL: $KAKAOCLI_WEBHOOK_URL"
 
-# Use --fail-with-body so we get response on errors, --silent for quiet, but show errors
-HTTP_CODE=$(echo "$PAYLOAD" | curl \
+# Send file directly (bypasses any shell variable corruption)
+HTTP_CODE=$(curl \
   -X POST \
   -H "Content-Type: application/json" \
   -H "User-Agent: kakao-summary-toolkit/1.0" \
-  --data-binary @- \
+  --data-binary "@$PAYLOAD_FILE" \
   --silent \
   --output /tmp/kakao-webhook-response.txt \
   --write-out "%{http_code}" \
