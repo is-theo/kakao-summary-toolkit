@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 # ============================================================================
 # Kakao Summary Toolkit — One-Stop Installer
 # ============================================================================
@@ -34,30 +34,28 @@ BINARY_URL="https://github.com/${REPO_USER}/${REPO_NAME}/raw/main/bin/kakaocli"
 # ============================================================================
 
 print_step() {
-  echo ""
-  echo "${BOLD}${BLUE}▶ $1${NC}"
+  printf "\n${BOLD}${BLUE}▶ %s${NC}\n" "$1"
 }
 
 print_success() {
-  echo "${GREEN}✓ $1${NC}"
+  printf "${GREEN}✓ %s${NC}\n" "$1"
 }
 
 print_warn() {
-  echo "${YELLOW}⚠ $1${NC}"
+  printf "${YELLOW}⚠ %s${NC}\n" "$1"
 }
 
 print_error() {
-  echo "${RED}✗ $1${NC}"
+  printf "${RED}✗ %s${NC}\n" "$1"
 }
 
 print_info() {
-  echo "  $1"
+  printf "  %s\n" "$1"
 }
 
 press_enter() {
-  echo ""
-  echo "${BOLD}계속하려면 Enter 키를 누르세요...${NC}"
-  read
+  printf "\n${BOLD}계속하려면 Enter 키를 누르세요...${NC}\n"
+  read -r _
 }
 
 # ============================================================================
@@ -187,11 +185,18 @@ if [[ -z "$DEVICE_UUID" ]]; then
 fi
 
 # Find the DB file
-DB_FILE=$(ls -1 "$KAKAO_CONTAINER" 2>/dev/null | grep -E '^[a-f0-9]{80,}$' | head -1)
+# KakaoTalk's DB filename is a long hex hash. Different versions/accounts
+# produce different lengths, so don't rely on exact length — find the largest
+# hex-named file in the container directory.
+DB_FILE=$(ls -1S "$KAKAO_CONTAINER" 2>/dev/null | grep -E '^[a-f0-9]+$' | head -1)
 
 if [[ -z "$DB_FILE" ]]; then
   print_error "카카오톡 DB 파일을 찾을 수 없습니다."
+  print_info "디버깅: 컨테이너 폴더 내용:"
+  ls -la "$KAKAO_CONTAINER" 2>&1 | head -20
+  print_info ""
   print_info "카카오톡 앱이 켜진 적이 있는지 확인하세요."
+  print_info "카카오톡을 실행해서 채팅방을 한 번 열어본 뒤 다시 시도하세요."
   exit 1
 fi
 
@@ -230,8 +235,8 @@ if [[ -z "$USER_ID" ]]; then
   print_info "     ${BOLD}brew tap JungHoonGhae/openkakao && brew install openkakao-cli${NC}"
   print_info "     ${BOLD}openkakao-cli login --save${NC}  # 출력에서 'User ID' 라인 확인"
   echo ""
-  echo -n "${BOLD}카카오톡 User ID 입력 (숫자만, 8~10자리): ${NC}"
-  read USER_ID
+  printf "${BOLD}카카오톡 User ID 입력 (숫자만, 8~10자리): ${NC}"
+  read -r USER_ID
 
   if [[ ! "$USER_ID" =~ ^[0-9]+$ ]]; then
     print_error "숫자가 아닙니다: $USER_ID"
@@ -307,22 +312,16 @@ for c in chats:
 # Done
 # ============================================================================
 
-echo ""
-echo "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-echo "${GREEN}${BOLD}  ✓ 설치 완료!${NC}"
-echo "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-echo ""
-echo "${BOLD}이제 사용 가능한 명령어:${NC}"
-echo ""
-echo "  ${BOLD}# 채팅방 목록${NC}"
-echo "  \$KAKAOCLI_BIN chats --db \"\$KAKAOCLI_DB\" --key \"\$KAKAOCLI_KEY\" --limit 20 --json"
-echo ""
-echo "  ${BOLD}# 특정 채팅방 메시지 (어제 24시간치)${NC}"
-echo "  \$KAKAOCLI_BIN messages --chat-id <ID> --since 24h --limit 5000 --json \\\\"
-echo "    --db \"\$KAKAOCLI_DB\" --key \"\$KAKAOCLI_KEY\""
-echo ""
-echo "${BOLD}참고:${NC}"
-echo "  • 새 터미널 창에서는 환경변수 자동 로드 (.zshrc에 추가됨)"
-echo "  • 채팅방 이름이 (unknown)으로 보이면: ${BOLD}$KAKAOCLI_BIN harvest${NC}"
-echo "    (Accessibility 권한 추가 필요, 카톡 앱 켜져 있어야 함)"
-echo ""
+printf "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}\n"
+printf "${GREEN}${BOLD}  ✓ 설치 완료!${NC}\n"
+printf "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}\n\n"
+printf "${BOLD}이제 사용 가능한 명령어:${NC}\n\n"
+printf "  ${BOLD}# 채팅방 목록${NC}\n"
+printf "  \$KAKAOCLI_BIN chats --db \"\$KAKAOCLI_DB\" --key \"\$KAKAOCLI_KEY\" --limit 20 --json\n\n"
+printf "  ${BOLD}# 특정 채팅방 메시지 (어제 24시간치)${NC}\n"
+printf "  \$KAKAOCLI_BIN messages --chat-id <ID> --since 24h --limit 5000 --json \\\\\n"
+printf "    --db \"\$KAKAOCLI_DB\" --key \"\$KAKAOCLI_KEY\"\n\n"
+printf "${BOLD}참고:${NC}\n"
+printf "  • 새 터미널 창에서는 환경변수 자동 로드 (.zshrc에 추가됨)\n"
+printf "  • 채팅방 이름이 (unknown)으로 보이면: ${BOLD}\$KAKAOCLI_BIN harvest${NC}\n"
+printf "    (Accessibility 권한 추가 필요, 카톡 앱 켜져 있어야 함)\n\n"
