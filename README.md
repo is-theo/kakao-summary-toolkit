@@ -5,7 +5,7 @@
 ## 설치 (10분)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/is-theo/kakao-summary-toolkit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/is-theo/kakao-summary-toolkit/main/install.sh -o /tmp/install.sh && bash /tmp/install.sh
 ```
 
 설치 스크립트가 자동으로 처리:
