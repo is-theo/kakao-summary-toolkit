@@ -222,7 +222,61 @@ if [[ -n "$CANDIDATES" ]]; then
   done
 fi
 
-# If candidates failed, prompt user to provide manually
+# If candidates failed, try OpenKakao auto-extraction
+if [[ -z "$USER_ID" ]]; then
+  echo ""
+  print_info "후보 ID 모두 실패 — OpenKakao 도구로 자동 추출 시도..."
+
+  # Step A: Check if OpenKakao stored credentials already exist
+  OPENKAKAO_CREDS="$HOME/.config/openkakao/credentials.json"
+
+  if [[ -f "$OPENKAKAO_CREDS" ]]; then
+    print_info "기존 OpenKakao 자격증명 발견"
+    EXTRACTED_ID=$(grep -oE '"user_id"[[:space:]]*:[[:space:]]*[0-9]+' "$OPENKAKAO_CREDS" | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$EXTRACTED_ID" ]]; then
+      print_info "추출된 User ID: $EXTRACTED_ID — 검증 중..."
+      AUTH_OUTPUT=$("$BINARY_PATH" auth --user-id "$EXTRACTED_ID" --verbose 2>&1)
+      if echo "$AUTH_OUTPUT" | grep -q "Database opened successfully"; then
+        USER_ID="$EXTRACTED_ID"
+        SECURE_KEY=$(echo "$AUTH_OUTPUT" | grep "Secure key:" | awk '{print $3}')
+        print_success "OpenKakao 자격증명에서 자동 발견됨: $USER_ID"
+      fi
+    fi
+  fi
+
+  # Step B: Install OpenKakao + run login --save if still no User ID
+  if [[ -z "$USER_ID" ]]; then
+    if ! command -v openkakao-cli &> /dev/null; then
+      print_info "OpenKakao 설치 중... (약 30초)"
+      brew tap JungHoonGhae/openkakao 2>&1 | tail -3
+      brew install openkakao-cli 2>&1 | tail -3
+    fi
+
+    if command -v openkakao-cli &> /dev/null; then
+      print_info "OpenKakao login --save 실행 중..."
+      # Run with stdin from /dev/tty in case it asks for password
+      LOGIN_OUTPUT=$(openkakao-cli login --save < /dev/tty 2>&1 || true)
+
+      # Extract User ID from output: "User ID: 42680568"
+      EXTRACTED_ID=$(echo "$LOGIN_OUTPUT" | grep -oE 'User ID:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+      if [[ -n "$EXTRACTED_ID" ]]; then
+        print_info "추출된 User ID: $EXTRACTED_ID — 검증 중..."
+        AUTH_OUTPUT=$("$BINARY_PATH" auth --user-id "$EXTRACTED_ID" --verbose 2>&1)
+        if echo "$AUTH_OUTPUT" | grep -q "Database opened successfully"; then
+          USER_ID="$EXTRACTED_ID"
+          SECURE_KEY=$(echo "$AUTH_OUTPUT" | grep "Secure key:" | awk '{print $3}')
+          print_success "OpenKakao로 자동 발견됨: $USER_ID"
+        fi
+      else
+        print_warn "OpenKakao 출력에서 User ID 못 찾음"
+        echo "$LOGIN_OUTPUT" | tail -10
+      fi
+    fi
+  fi
+fi
+
+# If still no User ID after all auto methods, prompt manually
 if [[ -z "$USER_ID" ]]; then
   echo ""
   print_warn "자동 탐색 실패 — User ID를 직접 입력해야 합니다."
@@ -231,17 +285,11 @@ if [[ -z "$USER_ID" ]]; then
   printf "  ${BOLD}방법 1${NC}: 카카오 개발자 페이지 (가장 안정적)\n"
   printf "    https://developers.kakao.com → 우측 상단 프로필 → 내 정보\n"
   printf "    회원번호: 표시되는 숫자가 User ID\n\n"
-  printf "  ${BOLD}방법 2${NC}: OpenKakao 도구로 자동 추출\n"
-  printf "    brew tap JungHoonGhae/openkakao\n"
-  printf "    brew install openkakao-cli\n"
-  printf "    openkakao-cli login --save\n"
-  printf "    → 출력의 'User ID:' 라인 확인\n\n"
-  printf "  ${BOLD}방법 3${NC}: 카카오톡 모바일 앱\n"
+  printf "  ${BOLD}방법 2${NC}: 카카오톡 모바일 앱\n"
   printf "    더보기(...) → 설정 → 카카오계정\n"
   printf "    (앱 버전에 따라 표시 안 될 수 있음)\n\n"
 
   printf "${BOLD}카카오톡 User ID 입력 (숫자만, 8~10자리): ${NC}"
-  # Read from /dev/tty so it works even when script is piped (curl | bash)
   read -r USER_ID < /dev/tty
 
   if [[ ! "$USER_ID" =~ ^[0-9]+$ ]]; then
