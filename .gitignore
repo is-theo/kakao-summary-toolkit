@@ -1,0 +1,29 @@
+# Secrets — NEVER commit these
+.kakaocli-config
+*.key
+credentials.json
+.env
+.env.*
+
+# Build artifacts (kakaocli source build)
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Output files
+/tmp/
+*.log
+extracted/
+output/
