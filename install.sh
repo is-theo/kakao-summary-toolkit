@@ -55,7 +55,7 @@ print_info() {
 
 press_enter() {
   printf "\n${BOLD}계속하려면 Enter 키를 누르세요...${NC}\n"
-  read -r _
+  read -r _ < /dev/tty
 }
 
 # ============================================================================
@@ -227,19 +227,25 @@ if [[ -z "$USER_ID" ]]; then
   echo ""
   print_warn "자동 탐색 실패 — User ID를 직접 입력해야 합니다."
   echo ""
-  print_info "User ID 확인 방법 3가지:"
-  print_info "  1. 카카오톡 모바일 앱 → 더보기(...) → 설정 → 카카오계정 → 회원번호"
-  print_info "  2. 누군가 본인 명의로 카카오 개발자 페이지 (https://developers.kakao.com) 가입한 적 있다면"
-  print_info "     '내 정보 > 회원번호'에서 확인 가능"
-  print_info "  3. 안 되면 OpenKakao 도구로 추출:"
-  print_info "     ${BOLD}brew tap JungHoonGhae/openkakao && brew install openkakao-cli${NC}"
-  print_info "     ${BOLD}openkakao-cli login --save${NC}  # 출력에서 'User ID' 라인 확인"
-  echo ""
+  printf "  ${BOLD}User ID 확인 방법${NC}\n\n"
+  printf "  ${BOLD}방법 1${NC}: 카카오 개발자 페이지 (가장 안정적)\n"
+  printf "    https://developers.kakao.com → 우측 상단 프로필 → 내 정보\n"
+  printf "    회원번호: 표시되는 숫자가 User ID\n\n"
+  printf "  ${BOLD}방법 2${NC}: OpenKakao 도구로 자동 추출\n"
+  printf "    brew tap JungHoonGhae/openkakao\n"
+  printf "    brew install openkakao-cli\n"
+  printf "    openkakao-cli login --save\n"
+  printf "    → 출력의 'User ID:' 라인 확인\n\n"
+  printf "  ${BOLD}방법 3${NC}: 카카오톡 모바일 앱\n"
+  printf "    더보기(...) → 설정 → 카카오계정\n"
+  printf "    (앱 버전에 따라 표시 안 될 수 있음)\n\n"
+
   printf "${BOLD}카카오톡 User ID 입력 (숫자만, 8~10자리): ${NC}"
-  read -r USER_ID
+  # Read from /dev/tty so it works even when script is piped (curl | bash)
+  read -r USER_ID < /dev/tty
 
   if [[ ! "$USER_ID" =~ ^[0-9]+$ ]]; then
-    print_error "숫자가 아닙니다: $USER_ID"
+    print_error "숫자가 아닙니다: '$USER_ID'"
     exit 1
   fi
 
