@@ -31,17 +31,18 @@ LIMIT="${1:-20}"
   --key "$KAKAOCLI_KEY" | python3 -c "
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
+KST = timezone(timedelta(hours=9))
 rows = json.load(sys.stdin)
-print(f'{\"ID\":<22} {\"이름\":<40} {\"멤버\":>6} {\"안읽음\":>7}  최근')
+print(f'{\"ID\":<22} {\"이름\":<40} {\"멤버\":>6} {\"안읽음\":>7}  최근(KST)')
 print('-' * 100)
 for row in rows:
     chat_id, name, members, unread, last_at = row
     name = (name or '(이름 없음)')[:38]
     if last_at:
         try:
-            dt = datetime.fromtimestamp(last_at, tz=timezone.utc).strftime('%m-%d %H:%M')
+            dt = datetime.fromtimestamp(last_at, tz=KST).strftime('%m-%d %H:%M')
         except (OSError, ValueError, OverflowError):
             dt = str(last_at)[:10]
     else:
