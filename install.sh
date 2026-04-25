@@ -97,15 +97,35 @@ fi
 print_success "카카오톡 로그인 데이터 확인됨"
 
 # sqlcipher check
-if ! command -v sqlcipher &> /dev/null; then
-  print_warn "sqlcipher가 설치되어 있지 않습니다."
+# Homebrew check — install if missing
+if ! command -v brew &> /dev/null; then
+  print_warn "Homebrew가 설치되어 있지 않습니다."
+  print_info "Homebrew를 자동으로 설치합니다 (관리자 비밀번호 입력 필요)..."
+  echo ""
+
+  # Official Homebrew install (requires sudo for /opt/homebrew or /usr/local)
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/tty
+
+  # Apple Silicon Homebrew is at /opt/homebrew, Intel at /usr/local
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
 
   if ! command -v brew &> /dev/null; then
-    print_error "Homebrew도 없습니다. https://brew.sh 에서 먼저 설치하세요."
+    print_error "Homebrew 설치 실패. https://brew.sh 에서 수동 설치 후 다시 실행하세요."
     exit 1
   fi
 
-  print_info "Homebrew로 sqlcipher 설치 중..."
+  print_success "Homebrew 설치됨"
+else
+  print_success "Homebrew 확인됨"
+fi
+
+# sqlcipher check — install if missing
+if ! command -v sqlcipher &> /dev/null; then
+  print_info "sqlcipher 설치 중..."
   brew install sqlcipher
 fi
 print_success "sqlcipher 확인됨"
