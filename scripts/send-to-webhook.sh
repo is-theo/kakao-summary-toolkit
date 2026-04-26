@@ -1,11 +1,16 @@
 #!/bin/zsh
 # ============================================================================
-# send-to-webhook.sh — 어제 24시간치 카톡 메시지를 n8n webhook으로 POST
+# send-to-webhook.sh v1.2 — 어제 자연일 카톡 메시지를 n8n webhook으로 POST
 # ============================================================================
+# 시간 정책: KST 단일 진실 + 어제 자연일 윈도우
+# - window: 어제 00:00 ~ 오늘 00:00 KST (자연일 24시간)
+# - kakaocli는 48h 가져온 후 Python에서 윈도우로 필터
+# - messages[].timestamp: KST (+09:00 명시)
+#
 # Usage:
-#   send-to-webhook.sh <chat_id>                  # 어제 24시간 (default)
-#   send-to-webhook.sh <chat_id> 7d               # 최근 7일
-#   send-to-webhook.sh <chat_id> 24h /tmp/x.json  # JSON 파일도 함께 저장
+#   send-to-webhook.sh <chat_id>                  # 어제 자연일 (default)
+#   send-to-webhook.sh <chat_id> 7d               # 최근 7일 (필터 없이 그대로)
+#   send-to-webhook.sh <chat_id> 24h /tmp/x.json  # 어제 자연일 + 파일 저장
 #
 # Required environment variables (in ~/.kakaocli-config):
 #   KAKAOCLI_BIN, KAKAOCLI_DB, KAKAOCLI_KEY, KAKAOCLI_WEBHOOK_URL
@@ -30,7 +35,17 @@ fi
 # Args
 CHAT_ID="${1:?Usage: send-to-webhook.sh <chat_id> [since=24h] [save_to_file]}"
 SINCE="${2:-24h}"
-SAVE_TO="${3:-}"  # Optional — also save payload to this path
+SAVE_TO="${3:-}"
+
+# Decide kakaocli fetch window:
+#   24h (default) → fetch 48h, filter to yesterday natural day
+#   others (7d etc) → fetch as-is, no filter
+KCLI_SINCE="$SINCE"
+NATURAL_DAY=false
+if [[ "$SINCE" == "24h" ]]; then
+  KCLI_SINCE="48h"
+  NATURAL_DAY=true
+fi
 
 # ============================================================================
 # Step 1: Get chat metadata (name, members, type)
@@ -48,7 +63,6 @@ CHAT_META_JSON=$("$KAKAOCLI_BIN" query \
    LIMIT 1" \
   --db "$KAKAOCLI_DB" --key "$KAKAOCLI_KEY")
 
-# Extract fields with python (jq might not be installed)
 CHAT_META=$(echo "$CHAT_META_JSON" | python3 -c "
 import json, sys
 rows = json.load(sys.stdin, strict=False)
@@ -71,59 +85,118 @@ if [[ -z "$CHAT_META" ]]; then
   exit 1
 fi
 
-CHAT_NAME=$(echo "$CHAT_META" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+CHAT_NAME=$(echo "$CHAT_META" | python3 -c "import json,sys; print(json.load(sys.stdin, strict=False)['name'])")
 echo "▶ Chat: $CHAT_NAME (ID: $CHAT_ID)"
 
 # ============================================================================
-# Step 2: Extract messages
+# Step 2: Extract messages (kakaocli 넉넉하게)
 # ============================================================================
 
-echo "▶ Extracting messages (since: $SINCE)..."
+if $NATURAL_DAY; then
+  echo "▶ Extracting messages (mode: 어제 자연일, kakaocli fetch: $KCLI_SINCE)..."
+else
+  echo "▶ Extracting messages (since: $KCLI_SINCE)..."
+fi
+
 MESSAGES_JSON=$("$KAKAOCLI_BIN" messages \
   --chat-id "$CHAT_ID" \
-  --since "$SINCE" \
+  --since "$KCLI_SINCE" \
   --limit 5000 \
   --json \
   --db "$KAKAOCLI_DB" \
   --key "$KAKAOCLI_KEY")
 
-MESSAGE_COUNT=$(echo "$MESSAGES_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin, strict=False)))")
-echo "  → $MESSAGE_COUNT messages"
+RAW_COUNT=$(echo "$MESSAGES_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin, strict=False)))")
+echo "  → $RAW_COUNT raw messages fetched"
 
-if [[ "$MESSAGE_COUNT" -eq 0 ]]; then
-  echo "⚠ No messages in this window. Aborting."
-  exit 0
+# ============================================================================
+# Step 3: Build payload (KST + natural day window filter)
+# ============================================================================
+
+NOW_KST=$(date '+%Y-%m-%dT%H:%M:%S+09:00')
+
+if $NATURAL_DAY; then
+  # 어제 자연일: 어제 00:00 ~ 오늘 00:00 KST
+  WINDOW_START=$(date -v-1d '+%Y-%m-%dT00:00:00+09:00')
+  WINDOW_END=$(date '+%Y-%m-%dT00:00:00+09:00')
+else
+  # 7d 등: 지금 - SINCE 만큼
+  # (간단히 지금 시각 기준으로 끝점 표시, 시작점은 24h라면 위, 다른 거면 -SINCE)
+  WINDOW_START=$(date -v-${SINCE} '+%Y-%m-%dT%H:%M:%S+09:00' 2>/dev/null || date -v-7d '+%Y-%m-%dT%H:%M:%S+09:00')
+  WINDOW_END="$NOW_KST"
 fi
 
-# ============================================================================
-# Step 3: Build payload (combine metadata + messages)
-# ============================================================================
-
-# Compute window timestamps (KST, macOS date syntax)
-NOW_KST=$(date '+%Y-%m-%dT%H:%M:%S+09:00')
-WINDOW_END=$(date -v-1d '+%Y-%m-%dT23:59:59+09:00')
-WINDOW_START=$(date -v-1d '+%Y-%m-%dT00:00:00+09:00')
-
-# Pass everything to Python via env vars (avoids JSON parsing issues with shell)
 export PY_CHAT_META="$CHAT_META"
 export PY_MESSAGES="$MESSAGES_JSON"
 export PY_NOW_KST="$NOW_KST"
 export PY_WINDOW_START="$WINDOW_START"
 export PY_WINDOW_END="$WINDOW_END"
 export PY_SINCE_LABEL="$SINCE"
+export PY_NATURAL_DAY=$($NATURAL_DAY && echo "1" || echo "0")
 
-# Write payload directly to temp file from Python (avoids shell variable corruption)
 PAYLOAD_FILE=$(mktemp -t kakao-payload.XXXXXX.json)
 trap 'rm -f "$PAYLOAD_FILE"' EXIT
 
-python3 <<PYEOF > "$PAYLOAD_FILE"
+python3 <<'PYEOF' > "$PAYLOAD_FILE"
 import json
 import os
+import sys
+from datetime import datetime, timezone, timedelta
+
+KST = timezone(timedelta(hours=9))
+
+def to_kst(ts_str):
+    """원본 timestamp → KST ISO8601 (+09:00)"""
+    if not ts_str:
+        return ts_str
+    s = ts_str.replace('Z', '+00:00')
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return ts_str
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST).strftime('%Y-%m-%dT%H:%M:%S+09:00')
+
+def parse_iso(s):
+    return datetime.fromisoformat(s.replace('Z', '+00:00'))
 
 chat_meta = json.loads(os.environ['PY_CHAT_META'], strict=False)
 messages = json.loads(os.environ['PY_MESSAGES'], strict=False)
+natural_day = os.environ['PY_NATURAL_DAY'] == "1"
 
-# Compute active speaker count
+# 1) 모든 메시지 timestamp → KST 변환
+for m in messages:
+    if 'timestamp' in m:
+        m['timestamp'] = to_kst(m['timestamp'])
+
+# 2) 자연일 모드면 윈도우로 필터링
+if natural_day:
+    win_start = parse_iso(os.environ['PY_WINDOW_START'])
+    win_end = parse_iso(os.environ['PY_WINDOW_END'])
+    
+    filtered = []
+    for m in messages:
+        ts = m.get('timestamp', '')
+        if not ts:
+            continue
+        try:
+            dt = parse_iso(ts)
+        except (ValueError, TypeError):
+            continue
+        if win_start <= dt < win_end:
+            filtered.append(m)
+    
+    print(f"  → filtered to {len(filtered)} messages in window {win_start.date()} ~ {win_end.date()}", file=sys.stderr)
+    messages = filtered
+
+# 3) 빈 결과 처리
+if not messages:
+    print("⚠ No messages in this window after filtering.", file=sys.stderr)
+    # 빈 페이로드라도 보내야 (n8n 워크플로우가 동작 자체는 시도)
+    pass
+
+# 4) Active speaker count
 speakers = set()
 for m in messages:
     if not m.get('is_from_me'):
@@ -133,9 +206,12 @@ for m in messages:
 
 payload = {
     "meta": {
-        "version": "1.0",
+        "version": "1.2",
         "sent_at": os.environ['PY_NOW_KST'],
         "source": "mac-kakaocli",
+        "timezone": "Asia/Seoul",
+        "window_mode": "natural_day" if natural_day else "rolling",
+        "_note": "All timestamps are KST (+09:00). No UTC fields.",
     },
     "chat": chat_meta,
     "window": {
@@ -152,7 +228,15 @@ payload = {
 print(json.dumps(payload, ensure_ascii=False))
 PYEOF
 
-# Optionally save a copy of payload (for debugging)
+# Show stats
+FINAL_COUNT=$(python3 -c "import json; print(json.load(open('$PAYLOAD_FILE'))['stats']['message_count'])")
+echo "  → $FINAL_COUNT messages in final payload"
+
+if [[ "$FINAL_COUNT" -eq 0 ]]; then
+  echo "⚠ No messages after filtering. Aborting."
+  exit 0
+fi
+
 if [[ -n "$SAVE_TO" ]]; then
   cp "$PAYLOAD_FILE" "$SAVE_TO"
   echo "  → Saved payload to $SAVE_TO ($(wc -c < "$SAVE_TO") bytes)"
@@ -165,11 +249,10 @@ fi
 echo "▶ Sending to webhook..."
 echo "  → URL: $KAKAOCLI_WEBHOOK_URL"
 
-# Send file directly (bypasses any shell variable corruption)
 HTTP_CODE=$(curl \
   -X POST \
   -H "Content-Type: application/json" \
-  -H "User-Agent: kakao-summary-toolkit/1.0" \
+  -H "User-Agent: kakao-summary-toolkit/1.2" \
   --data-binary "@$PAYLOAD_FILE" \
   --silent \
   --output /tmp/kakao-webhook-response.txt \
